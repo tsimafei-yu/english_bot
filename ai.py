@@ -50,17 +50,19 @@ Strict format, no extra text:
         user = user_answer.lower().strip()
         correct = correct_translation.lower().strip()
 
-        # simple check first — avoid unnecessary API calls
+        if len(user) < 2:
+            return False
+
         correct_words = [w.strip() for w in correct.replace(",", " ").split()]
         if user in correct_words or correct in user or user in correct:
             return True
 
         prompt = f"""English word: "{word}"
-Correct translation: "{correct_translation}"
-User answer: "{user_answer}"
+    Correct translation: "{correct_translation}"
+    User answer: "{user_answer}"
 
-Is this a correct translation? Accept synonyms and close meanings.
-Reply with one word only: YES or NO"""
+    Is this a correct translation? Accept synonyms and close meanings.
+    Reply with one word only: YES or NO"""
 
         result = await self._ask(prompt)
         if not result:
