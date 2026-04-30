@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 import os
+import pytz
 
 from database import Database
 from ai import GeminiAI
@@ -182,6 +183,22 @@ async def finish_quiz_round(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
         db.update_streak()
         context.bot_data.pop("quiz", None)
 
+async def review(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        words = db.get_all_seen_words()
+        if not words:
+            await update.message.reply_text("No words to review yet.")
+            return
+
+        context.bot_data["quiz"] = {
+            "words": words,
+            "current_index": 0,
+            "wrong_words": [],
+            "correct": 0,
+            "wrong": 0
+        }
+
+        await update.message.reply_text(f"Review mode. {len(words)} words total.")
+        await send_next_quiz_word(context, update.effective_chat.id)
 
 def main():
     from load_words_offline import WORDS
@@ -197,10 +214,12 @@ def main():
     app.add_handler(CommandHandler("word", random_word))
     app.add_handler(CommandHandler("quiz", quiz_now))
     app.add_handler(CommandHandler("today", send_today))
+    app.add_handler(CommandHandler("review", review))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz_answer))
 
     scheduler = Scheduler(app.bot, db, YOUR_CHAT_ID)
-    apscheduler = AsyncIOScheduler()
+
+    apscheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/Warsaw"))
     apscheduler.add_job(scheduler.send_morning_words, "cron", hour=9, minute=0)
     apscheduler.add_job(scheduler.send_quiz_reminder, "cron", hour=14, minute=0,
                         kwargs={"bot_data": app.bot_data})

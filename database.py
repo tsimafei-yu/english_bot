@@ -226,3 +226,14 @@ class Database:
                 "INSERT INTO daily_stats (date, words_shown) VALUES (?, 0) ON CONFLICT(date) DO NOTHING",
                 (today,)
             )
+
+    def get_all_seen_words(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT w.id, w.word, w.translation, w.example
+                FROM words w
+                JOIN progress p ON w.id = p.word_id
+                WHERE p.times_seen > 0
+                ORDER BY RANDOM()
+            """).fetchall()
+            return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
