@@ -184,6 +184,11 @@ async def finish_quiz_round(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
 
 def main():
+    from load_words_offline import WORDS
+    for word, translation, example in WORDS:
+        if not db.word_exists(word):
+            db.add_word(word, translation, example)
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
