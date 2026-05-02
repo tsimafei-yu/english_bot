@@ -88,6 +88,9 @@ async def yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not pending:
         return
     db.add_custom_word(pending["word"], pending["translation"], pending["example"])
+    word_id = db.get_word_id(pending["word"])
+    if word_id:
+        db.add_word_to_today(word_id)
     context.bot_data.pop("pending_add")
     await update.message.reply_text(f"Saved: {pending['word']} — {pending['translation']}")
 
@@ -151,6 +154,9 @@ async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
         translation = update.message.text.strip()
         example = pending.get("example") or "—"
         db.add_custom_word(pending["word"], translation, example)
+        word_id = db.get_word_id(pending["word"])
+        if word_id:
+            db.add_word_to_today(word_id)
         context.bot_data.pop("pending_add")
         await update.message.reply_text(f"Saved: {pending['word']} — {translation}")
         return
@@ -225,6 +231,31 @@ async def review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Review mode. {len(words)} words total.")
         await send_next_quiz_word(context, update.effective_chat.id)
 
+async def flashcards(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    words = db.get_flashcards()
+    if not words:
+        await update.message.reply_text("No words yet. Use /today first.")
+        return
+
+    context.bot_data["quiz"] = {
+        "words": words,
+        "current_index": 0,
+        "wrong_words": [],
+        "correct": 0,
+        "wrong": 0
+    }
+
+    await update.message.reply_text(f"Flashcard mode. {len(words)} words. /stop to quit.")
+    await send_next_quiz_word(context, update.effective_chat.id)
+
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.bot_data.get("quiz"):
+        context.bot_data.pop("quiz")
+        await update.message.reply_text("Stopped.")
+    else:
+        await update.message.reply_text("Nothing is running.")
+
 def main():
     from load_words_offline import WORDS
     for word, translation, example in WORDS:
@@ -240,6 +271,8 @@ def main():
     app.add_handler(CommandHandler("quiz", quiz_now))
     app.add_handler(CommandHandler("today", send_today))
     app.add_handler(CommandHandler("review", review))
+    app.add_handler(CommandHandler("fc", flashcards))
+    app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("yes", yes))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz_answer))
 

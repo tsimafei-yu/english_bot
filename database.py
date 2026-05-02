@@ -256,3 +256,31 @@ class Database:
                 "UPDATE words SET translation = ? WHERE word = ?",
                 (translation, word.lower())
             )
+
+    def add_word_to_today(self, word_id: int):
+        today = date.today().isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO daily_words (word_id, date) VALUES (?, ?)",
+                (word_id, today)
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO progress (word_id, last_seen, next_review) VALUES (?, ?, ?)",
+                (word_id, today, today)
+            )
+
+    def get_word_id(self, word: str) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT id FROM words WHERE word = ?", (word.lower(),)).fetchone()
+            return row[0] if row else None
+
+    def get_flashcards(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT w.id, w.word, w.translation, w.example
+                FROM words w
+                JOIN progress p ON w.id = p.word_id
+                WHERE p.times_seen > 0
+                ORDER BY p.times_wrong DESC, RANDOM()
+            """).fetchall()
+            return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
