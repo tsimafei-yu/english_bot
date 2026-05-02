@@ -58,15 +58,15 @@ class Database:
 
     def add_custom_word(self, word: str, translation: str, example: str):
         with self._connect() as conn:
-            cursor = conn.execute(
+            conn.execute(
                 "INSERT OR IGNORE INTO words (word, translation, example, source) VALUES (?, ?, ?, 'custom')",
                 (word.lower(), translation, example)
             )
-            word_id = cursor.lastrowid
-            if word_id:
+            row = conn.execute("SELECT id FROM words WHERE word = ?", (word.lower(),)).fetchone()
+            if row:
                 conn.execute(
-                    "INSERT OR IGNORE INTO progress (word_id, next_review) VALUES (?, ?)",
-                    (word_id, date.today().isoformat())
+                    "INSERT OR IGNORE INTO progress (word_id, last_seen, next_review) VALUES (?, ?, ?)",
+                    (row[0], date.today().isoformat(), date.today().isoformat())
                 )
 
     def word_exists(self, word: str) -> bool:
@@ -280,7 +280,6 @@ class Database:
                 SELECT w.id, w.word, w.translation, w.example
                 FROM words w
                 JOIN progress p ON w.id = p.word_id
-                WHERE p.times_seen > 0
                 ORDER BY p.times_wrong DESC, RANDOM()
             """).fetchall()
             return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
