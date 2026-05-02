@@ -237,3 +237,10 @@ class Database:
                 ORDER BY RANDOM()
             """).fetchall()
             return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
+
+    def update_word_translation(self, word: str, translation: str):
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE words SET translation = ? WHERE word = ?",
+                (translation, word.lower())
+            )

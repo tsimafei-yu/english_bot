@@ -63,16 +63,19 @@ async def add_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Looking up '{word}'...")
 
     word_data = await ai.get_word_info(word)
-    if not word_data:
-        await update.message.reply_text("Could not find the word. Try again.")
-        return
 
-    db.add_custom_word(word, word_data["translation"], word_data["example"])
-    await update.message.reply_text(
-        f"{word} — {word_data['translation']}\n"
-        f"{word_data['example']}"
-    )
-
+    if word_data:
+        db.add_custom_word(word, word_data["translation"], word_data["example"])
+        await update.message.reply_text(
+            f"{word} — {word_data['translation']}\n{word_data['example']}"
+        )
+    else:
+        db.add_custom_word(word, "—", "—")
+        context.bot_data["pending_translation"] = word
+        await update.message.reply_text(
+            f"Could not fetch translation automatically.\n"
+            f"Reply with the translation for '{word}':"
+        )
 
 async def random_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word = db.get_random_review_word()
@@ -129,6 +132,13 @@ async def send_next_quiz_word(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
 
 async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pending = context.bot_data.get("pending_translation")
+    if pending:
+        translation = update.message.text.strip()
+        db.update_word_translation(pending, translation)
+        context.bot_data.pop("pending_translation")
+        await update.message.reply_text(f"Saved: {pending} — {translation}")
+        return
     quiz = context.bot_data.get("quiz")
     if not quiz:
         return
