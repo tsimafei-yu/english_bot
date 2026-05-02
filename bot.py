@@ -65,17 +65,31 @@ async def add_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word_data = await ai.get_word_info(word)
 
     if word_data:
-        db.add_custom_word(word, word_data["translation"], word_data["example"])
+        context.bot_data["pending_add"] = {
+            "word": word,
+            "translation": word_data["translation"],
+            "example": word_data["example"]
+        }
         await update.message.reply_text(
-            f"{word} — {word_data['translation']}\n{word_data['example']}"
+            f"{word} — {word_data['translation']}\n"
+            f"{word_data['example']}\n\n"
+            f"/yes to accept or type your own translation:"
         )
     else:
-        db.add_custom_word(word, "—", "—")
-        context.bot_data["pending_translation"] = word
+        context.bot_data["pending_add"] = {"word": word, "translation": None, "example": "—"}
         await update.message.reply_text(
-            f"Could not fetch translation automatically.\n"
-            f"Reply with the translation for '{word}':"
+            f"Could not fetch translation for '{word}'.\n"
+            f"Type your translation:"
         )
+
+
+async def yes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pending = context.bot_data.get("pending_add")
+    if not pending:
+        return
+    db.add_custom_word(pending["word"], pending["translation"], pending["example"])
+    context.bot_data.pop("pending_add")
+    await update.message.reply_text(f"Saved: {pending['word']} — {pending['translation']}")
 
 async def random_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
     word = db.get_random_review_word()
@@ -132,12 +146,13 @@ async def send_next_quiz_word(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
 
 
 async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pending = context.bot_data.get("pending_translation")
+    pending = context.bot_data.get("pending_add")
     if pending:
         translation = update.message.text.strip()
-        db.update_word_translation(pending, translation)
-        context.bot_data.pop("pending_translation")
-        await update.message.reply_text(f"Saved: {pending} — {translation}")
+        example = pending.get("example") or "—"
+        db.add_custom_word(pending["word"], translation, example)
+        context.bot_data.pop("pending_add")
+        await update.message.reply_text(f"Saved: {pending['word']} — {translation}")
         return
     quiz = context.bot_data.get("quiz")
     if not quiz:
@@ -225,6 +240,7 @@ def main():
     app.add_handler(CommandHandler("quiz", quiz_now))
     app.add_handler(CommandHandler("today", send_today))
     app.add_handler(CommandHandler("review", review))
+    app.add_handler(CommandHandler("yes", yes))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quiz_answer))
 
     scheduler = Scheduler(app.bot, db, YOUR_CHAT_ID)
