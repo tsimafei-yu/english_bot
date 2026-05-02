@@ -76,30 +76,42 @@ class Database:
 
     def get_words_for_morning(self, count: int = 10) -> list[dict]:
         today = date.today().isoformat()
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
         with self._connect() as conn:
             rows = conn.execute("""
                 SELECT w.id, w.word, w.translation, w.example
                 FROM words w
                 JOIN progress p ON w.id = p.word_id
-                WHERE p.learned = 0 AND (p.next_review IS NULL OR p.next_review <= ?)
+                WHERE p.learned = 0
+                  AND (p.next_review IS NULL OR p.next_review <= ?)
+                  AND (p.last_seen IS NULL OR p.last_seen < ?)
                 ORDER BY p.next_review ASC, RANDOM()
                 LIMIT ?
-            """, (today, count)).fetchall()
+            """, (today, today, count)).fetchall()
+
+            seen_ids = {r[0] for r in rows}
 
             if len(rows) < count:
-                existing_ids = [r[0] for r in rows]
-                placeholders = ",".join("?" * len(existing_ids)) if existing_ids else "0"
+                placeholders = ",".join("?" * len(seen_ids)) if seen_ids else "0"
                 extra = conn.execute(f"""
                     SELECT w.id, w.word, w.translation, w.example
                     FROM words w
                     LEFT JOIN progress p ON w.id = p.word_id
-                    WHERE p.id IS NULL AND w.id NOT IN ({placeholders})
+                    WHERE p.id IS NULL
+                      AND w.id NOT IN ({placeholders})
                     ORDER BY RANDOM()
                     LIMIT ?
-                """, (*existing_ids, count - len(rows))).fetchall()
+                """, (*seen_ids, count - len(rows))).fetchall()
                 rows.extend(extra)
 
-            return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
+            seen = set()
+            unique = []
+            for r in rows:
+                if r[0] not in seen:
+                    seen.add(r[0])
+                    unique.append({"id": r[0], "word": r[1], "translation": r[2], "example": r[3]})
+
+            return unique[:count]
 
     def save_daily_words(self, word_ids: list[int]):
         today = date.today().isoformat()
