@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 
 class Database:
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str = "words.db"):
         self.db_path = db_path
         self._init_db()
 
@@ -23,7 +23,7 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS progress (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    word_id INTEGER NOT NULL,
+                    word_id INTEGER UNIQUE NOT NULL,
                     times_seen INTEGER DEFAULT 0,
                     times_correct INTEGER DEFAULT 0,
                     times_wrong INTEGER DEFAULT 0,
@@ -38,16 +38,25 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     word_id INTEGER NOT NULL,
                     date TEXT NOT NULL,
+                    UNIQUE(word_id, date),
+                    FOREIGN KEY (word_id) REFERENCES words(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS flashcards (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    word_id INTEGER UNIQUE NOT NULL,
+                    correct_streak INTEGER DEFAULT 0,
                     FOREIGN KEY (word_id) REFERENCES words(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS daily_stats (
                     date TEXT PRIMARY KEY,
-                    words_shown INTEGER DEFAULT 0,
                     correct INTEGER DEFAULT 0,
                     wrong INTEGER DEFAULT 0
                 );
             """)
+
+    # ── words ──────────────────────────────────────────────────────────────
 
     def add_word(self, word: str, translation: str, example: str, source: str = "oxford"):
         with self._connect() as conn:
@@ -56,33 +65,34 @@ class Database:
                 (word.lower(), translation, example, source)
             )
 
-    def add_custom_word(self, word: str, translation: str, example: str):
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO words (word, translation, example, source) VALUES (?, ?, ?, 'custom')",
-                (word.lower(), translation, example)
-            )
-            row = conn.execute("SELECT id FROM words WHERE word = ?", (word.lower(),)).fetchone()
-            if row:
-                conn.execute(
-                    "INSERT OR IGNORE INTO progress (word_id, last_seen, next_review) VALUES (?, ?, ?)",
-                    (row[0], date.today().isoformat(), date.today().isoformat())
-                )
-
     def word_exists(self, word: str) -> bool:
         with self._connect() as conn:
             row = conn.execute("SELECT id FROM words WHERE word = ?", (word.lower(),)).fetchone()
             return row is not None
 
+    def get_word_id(self, word: str) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT id FROM words WHERE word = ?", (word.lower(),)).fetchone()
+            return row[0] if row else None
+
+    def update_word_translation(self, word: str, translation: str):
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE words SET translation = ? WHERE word = ?",
+                (translation, word.lower())
+            )
+
+    # ── daily ──────────────────────────────────────────────────────────────
+
     def get_words_for_morning(self, count: int = 10) -> list[dict]:
         today = date.today().isoformat()
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
         with self._connect() as conn:
             rows = conn.execute("""
                 SELECT w.id, w.word, w.translation, w.example
                 FROM words w
                 JOIN progress p ON w.id = p.word_id
                 WHERE p.learned = 0
+                  AND w.source = 'oxford'
                   AND (p.next_review IS NULL OR p.next_review <= ?)
                   AND (p.last_seen IS NULL OR p.last_seen < ?)
                 ORDER BY p.next_review ASC, RANDOM()
@@ -98,6 +108,7 @@ class Database:
                     FROM words w
                     LEFT JOIN progress p ON w.id = p.word_id
                     WHERE p.id IS NULL
+                      AND w.source = 'oxford'
                       AND w.id NOT IN ({placeholders})
                     ORDER BY RANDOM()
                     LIMIT ?
@@ -119,7 +130,7 @@ class Database:
             conn.execute("DELETE FROM daily_words WHERE date = ?", (today,))
             for word_id in word_ids:
                 conn.execute(
-                    "INSERT INTO daily_words (word_id, date) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO daily_words (word_id, date) VALUES (?, ?)",
                     (word_id, today)
                 )
                 conn.execute(
@@ -143,19 +154,7 @@ class Database:
             """, (today,)).fetchall()
             return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
 
-    def get_random_review_word(self) -> dict | None:
-        with self._connect() as conn:
-            row = conn.execute("""
-                SELECT w.id, w.word, w.translation, w.example
-                FROM words w
-                JOIN progress p ON w.id = p.word_id
-                WHERE p.learned = 0 AND p.times_seen > 0
-                ORDER BY RANDOM()
-                LIMIT 1
-            """).fetchone()
-            return {"id": row[0], "word": row[1], "translation": row[2], "example": row[3]} if row else None
-
-    def mark_answer(self, word_id: int, correct: bool):
+    def mark_daily_answer(self, word_id: int, correct: bool):
         today = date.today().isoformat()
         with self._connect() as conn:
             row = conn.execute(
@@ -197,6 +196,75 @@ class Database:
                     wrong = wrong + excluded.wrong
             """, (today, 1 if correct else 0, 0 if correct else 1))
 
+    # ── flashcards ─────────────────────────────────────────────────────────
+
+    def add_to_flashcards(self, word_id: int):
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO flashcards (word_id, correct_streak) VALUES (?, 0)",
+                (word_id,)
+            )
+
+    def get_flashcards(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT w.id, w.word, w.translation, w.example
+                FROM words w
+                JOIN flashcards f ON w.id = f.word_id
+                ORDER BY RANDOM()
+            """).fetchall()
+            return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
+
+    def mark_flashcard_answer(self, word_id: int, correct: bool) -> bool:
+        """Returns True if word is graduated (3 correct in a row) and removed."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT correct_streak FROM flashcards WHERE word_id = ?", (word_id,)
+            ).fetchone()
+            if not row:
+                return False
+
+            if correct:
+                new_streak = row[0] + 1
+                if new_streak >= 3:
+                    conn.execute("DELETE FROM flashcards WHERE word_id = ?", (word_id,))
+                    # add to progress so it shows in review
+                    today = date.today().isoformat()
+                    conn.execute(
+                        "INSERT OR IGNORE INTO progress (word_id, last_seen, next_review, times_seen) VALUES (?, ?, ?, 1)",
+                        (word_id, today, today)
+                    )
+                    return True
+                else:
+                    conn.execute(
+                        "UPDATE flashcards SET correct_streak = ? WHERE word_id = ?",
+                        (new_streak, word_id)
+                    )
+            else:
+                conn.execute(
+                    "UPDATE flashcards SET correct_streak = 0 WHERE word_id = ?", (word_id,)
+                )
+            return False
+
+    def flashcard_count(self) -> int:
+        with self._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM flashcards").fetchone()[0]
+
+    # ── review ─────────────────────────────────────────────────────────────
+
+    def get_review_words(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT w.id, w.word, w.translation, w.example
+                FROM words w
+                JOIN progress p ON w.id = p.word_id
+                WHERE p.times_seen > 0
+                ORDER BY RANDOM()
+            """).fetchall()
+            return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
+
+    # ── stats ──────────────────────────────────────────────────────────────
+
     def get_stats(self) -> dict:
         today = date.today().isoformat()
         with self._connect() as conn:
@@ -204,6 +272,7 @@ class Database:
             in_progress = conn.execute(
                 "SELECT COUNT(*) FROM progress WHERE learned = 0 AND times_seen > 0"
             ).fetchone()[0]
+            fc_count = conn.execute("SELECT COUNT(*) FROM flashcards").fetchone()[0]
             today_row = conn.execute(
                 "SELECT correct, wrong FROM daily_stats WHERE date = ?", (today,)
             ).fetchone()
@@ -212,7 +281,13 @@ class Database:
             total = correct + wrong
             accuracy = round(correct / total * 100) if total > 0 else 0
             streak = self._calculate_streak(conn)
-            return {"learned": learned, "in_progress": in_progress, "streak": streak, "accuracy_today": accuracy}
+            return {
+                "learned": learned,
+                "in_progress": in_progress,
+                "flashcards": fc_count,
+                "streak": streak,
+                "accuracy_today": accuracy
+            }
 
     def _calculate_streak(self, conn) -> int:
         rows = conn.execute(
@@ -235,51 +310,6 @@ class Database:
         today = date.today().isoformat()
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO daily_stats (date, words_shown) VALUES (?, 0) ON CONFLICT(date) DO NOTHING",
+                "INSERT INTO daily_stats (date) VALUES (?) ON CONFLICT(date) DO NOTHING",
                 (today,)
             )
-
-    def get_all_seen_words(self) -> list[dict]:
-        with self._connect() as conn:
-            rows = conn.execute("""
-                SELECT w.id, w.word, w.translation, w.example
-                FROM words w
-                JOIN progress p ON w.id = p.word_id
-                WHERE p.times_seen > 0
-                ORDER BY RANDOM()
-            """).fetchall()
-            return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]
-
-    def update_word_translation(self, word: str, translation: str):
-        with self._connect() as conn:
-            conn.execute(
-                "UPDATE words SET translation = ? WHERE word = ?",
-                (translation, word.lower())
-            )
-
-    def add_word_to_today(self, word_id: int):
-        today = date.today().isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO daily_words (word_id, date) VALUES (?, ?)",
-                (word_id, today)
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO progress (word_id, last_seen, next_review) VALUES (?, ?, ?)",
-                (word_id, today, today)
-            )
-
-    def get_word_id(self, word: str) -> int | None:
-        with self._connect() as conn:
-            row = conn.execute("SELECT id FROM words WHERE word = ?", (word.lower(),)).fetchone()
-            return row[0] if row else None
-
-    def get_flashcards(self) -> list[dict]:
-        with self._connect() as conn:
-            rows = conn.execute("""
-                SELECT w.id, w.word, w.translation, w.example
-                FROM words w
-                JOIN progress p ON w.id = p.word_id
-                ORDER BY p.times_wrong DESC, RANDOM()
-            """).fetchall()
-            return [{"id": r[0], "word": r[1], "translation": r[2], "example": r[3]} for r in rows]

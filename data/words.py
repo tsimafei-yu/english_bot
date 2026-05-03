@@ -1,5 +1,3 @@
-from database import Database
-
 WORDS = [
     ("abandon", "бросать, покидать", "He had to abandon his car in the snow."),
     ("absolute", "абсолютный", "I have absolute confidence in her."),
@@ -191,22 +189,3 @@ WORDS = [
     ("valuable", "ценный", "Her feedback was very valuable."),
     ("various", "различный", "There are various ways to solve this problem."),
 ]
-
-
-def load():
-    db = Database("words.db")
-    loaded = 0
-    skipped = 0
-
-    for word, translation, example in WORDS:
-        if db.word_exists(word):
-            skipped += 1
-            continue
-        db.add_word(word, translation, example)
-        loaded += 1
-
-    print(f"Done. Loaded: {loaded}, skipped: {skipped}")
-
-
-if __name__ == "__main__":
-    load()

@@ -4,7 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 
 class GeminiAI:
@@ -16,21 +16,20 @@ class GeminiAI:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.3, "maxOutputTokens": 500}
         }
-        url = f"{GEMINI_API_URL}?key={self.api_key}"
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload) as resp:
+                async with session.post(f"{GEMINI_URL}?key={self.api_key}", json=payload) as resp:
                     if resp.status != 200:
                         logger.error(f"Gemini error: {resp.status}")
                         return None
                     data = await resp.json()
                     return data["candidates"][0]["content"]["parts"][0]["text"]
         except Exception as e:
-            logger.error(f"Gemini request failed: {e}")
+            logger.error(f"Gemini failed: {e}")
             return None
 
     async def get_word_info(self, word: str) -> dict | None:
-        prompt = f"""Return JSON for the English word "{word}". Reply in Russian for the translation.
+        prompt = f"""Return JSON for the English word "{word}". Translation must be in Russian.
 Strict format, no extra text:
 {{
   "translation": "translation in Russian (1-3 words)",
@@ -58,11 +57,11 @@ Strict format, no extra text:
             return True
 
         prompt = f"""English word: "{word}"
-    Correct translation: "{correct_translation}"
-    User answer: "{user_answer}"
+Correct translation: "{correct_translation}"
+User answer: "{user_answer}"
 
-    Is this a correct translation? Accept synonyms and close meanings.
-    Reply with one word only: YES or NO"""
+Is this a correct translation? Accept synonyms and close meanings.
+Reply with one word only: YES or NO"""
 
         result = await self._ask(prompt)
         if not result:

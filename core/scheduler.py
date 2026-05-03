@@ -1,6 +1,6 @@
 import logging
 from telegram import Bot
-from database import Database
+from core.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +33,10 @@ class Scheduler:
         if not words:
             return
 
-        await self.bot.send_message(self.chat_id, "Time to review. Starting now.")
+        await self.bot.send_message(self.chat_id, "Time to review.")
 
-        bot_data["quiz"] = {
+        bot_data["session"] = {
+            "mode": "daily",
             "words": words,
             "current_index": 0,
             "wrong_words": [],
@@ -43,5 +44,4 @@ class Scheduler:
             "wrong": 0
         }
 
-        first_word = words[0]
-        await self.bot.send_message(self.chat_id, first_word["word"])
+        await self.bot.send_message(self.chat_id, words[0]["word"])
